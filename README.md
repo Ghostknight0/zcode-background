@@ -10,7 +10,7 @@
 
 ```powershell
 # 1. 克隆或下载本仓库到固定位置（不要解压后又移动）
-git clone <仓库地址> ZCodeBackground && cd ZCodeBackground
+git clone https://github.com/Ghostknight0/zcode-background.git ZCodeBackground && cd ZCodeBackground
 
 # 2. 用 PowerShell 7 一行安装（自动探测 ZCode，用包内示例素材）
 pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1
