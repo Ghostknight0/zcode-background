@@ -1,0 +1,27 @@
+# 构建产物：launcher.exe 由 install 脚本用 csc.exe 重新编译生成。
+# 预编译版本也保留在仓库中，作为编译环境异常时的兜底。
+# 如要排除，取消注释下一行：
+# *.exe
+
+# 测试与日志
+*.log
+*.err.log
+test-*
+
+# 备份
+*.bak
+
+# 打包产物
+*.zip
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统垃圾
+Thumbs.db
+Desktop.ini
+.DS_Store
