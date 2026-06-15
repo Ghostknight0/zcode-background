@@ -1,5 +1,7 @@
 # ZCode 背景注入工具
 
+> 🪟 **仅支持 Windows**（Win10 1607+ / Win11）。依赖 PowerShell 7、.NET Framework、Chrome DevTools Protocol 等 Windows 特有机制，macOS / Linux 无法使用。
+
 给 [ZCode](https://z.ai) 编辑器注入自定义背景的工具。支持**图片**和**视频**背景，支持**目录随机**、**图片视频混合 1:1 轮换**、**运行时定时轮换**、**图片/视频分别设置透明度**。
 
 原理：以远程调试模式启动 ZCode，通过 Chrome DevTools Protocol (CDP) 把一个覆盖层（`<img>` 或 `<video>`）注入到 ZCode 的每个页面里。图片/视频由本地 HTTP 服务（`127.0.0.1`）提供，用 CSS `opacity` 控制透明度。
@@ -10,8 +12,11 @@
 
 ## 一、运行前提
 
+> 🪟 本工具**仅支持 Windows**（Win10 1607+ / Win11），macOS / Linux 无法使用。
+
 | 依赖 | 说明 | 检查方法 |
 |---|---|---|
+| **Windows 10 1607+ / Win11** | 依赖 .NET Framework、Windows 注册表、COM 快捷方式接口 | — |
 | **ZCode** | 已安装并能正常运行 | — |
 | **PowerShell 7 (`pwsh.exe`)** | **必须**。脚本是无 BOM 的 UTF-8，Windows PowerShell 5.1 会乱码崩溃 | 命令行执行 `pwsh -v`，能出版本号即可。没有就到 https://github.com/PowerShell/PowerShell/releases 下载安装 |
 | **.NET Framework 4.x** | 用于编译启动器（Win10 1607+/Win11 自带，一般无需操心） | 基本不用管 |
@@ -65,12 +70,13 @@ git clone <仓库地址> ZCodeBackground
 在解压目录里 **右键空白处 → 打开终端 / PowerShell 7**，执行：
 
 ```powershell
-# 最简单：用包内 assets 示例图片视频（开箱即用）
-pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1 `
-    -ZCodePath "C:\你的\ZCode\ZCode.exe"
+# 最简单：一行搞定（自动探测 ZCode + 用包内 assets 示例图片视频）
+pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1
 ```
 
-就这样！默认会用 `assets\` 里的示例图和视频，`random` 模式混合随机，每 60 分钟换一个。
+就这样！工具会**自动探测你电脑上的 ZCode 安装路径**，用 `assets\` 里的示例图和视频，`random` 模式混合随机，每 60 分钟换一个。
+
+> 💡 如果自动探测失败（极少数情况），手动指定：`-ZCodePath "C:\你的\ZCode\ZCode.exe"`
 
 成功后桌面会出现 **「ZCode Background」** 快捷方式。
 
@@ -88,7 +94,6 @@ pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1 `
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1 `
-    -ZCodePath "C:\你的\ZCode\ZCode.exe" `
     -MediaDirectory "E:\你的壁纸库" `
     -Opacity 0.2 `
     -RotateInterval 3600
@@ -108,7 +113,7 @@ pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1 `
 
 | 参数 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
-| `-ZCodePath` | ✅ | — | 你的 ZCode.exe 完整路径 |
+| `-ZCodePath` | 可选 | 自动探测 | ZCode.exe 完整路径；不传则自动探测本机安装位置 |
 | `-BackgroundMode` | 可选 | `random` | `image` / `random` / `video` 三选一 |
 | `-ImagePath` | image 模式用 | `assets\sample-background.jpg` | 固定图片路径 |
 | `-MediaDirectory` | random/video 用 | `assets\` | 媒体目录（图片视频可混放） |
@@ -117,6 +122,17 @@ pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1 `
 | `-VideoOpacity` | 可选 | 回退到 `-Opacity` | **视频专用透明度**，混合轮换时视频用这个值 |
 | `-RotateInterval` | 可选 | `3600`（60分钟） | 运行时轮换间隔（秒），`0` = 不轮换 |
 | `-MediaPort` | 可选 | `9231` | 本地媒体 HTTP 服务端口，被占自动 +1 |
+
+### ZCode 路径自动探测
+
+安装时**不需要手动指定 ZCode 的安装路径**——工具会自动探测，按以下顺序查找（找到即停）：
+
+1. **运行中的 ZCode 进程**（最准）
+2. **注册表卸载项**（最通用，DisplayName 含 "ZCode"）
+3. **桌面/开始菜单快捷方式**（解析 .lnk 的目标路径）
+4. **常见安装目录**（`%LOCALAPPDATA%\Programs\ZCode`、`%ProgramFiles%\ZCode` 等）
+
+只有所有探测源都失败时，才会提示你用 `-ZCodePath` 手动指定。绝大多数情况下你只需一行命令就能完成安装。
 
 ### 动态透明度（图片/视频分别设置）
 

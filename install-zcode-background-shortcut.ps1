@@ -42,7 +42,8 @@ param(
     [string]$NativeLauncherPath = (Join-Path $PSScriptRoot "zcode-background-launcher.exe"),
 
     # 快捷方式使用 ZCode 主程序自身的应用图标。
-    [string]$ZCodePath = "D:\ProgramFiles\ZCode\ZCode.exe",
+    # 留空（默认）时自动探测本机 ZCode 安装路径。
+    [string]$ZCodePath = "",
 
     # 可手动指定 PowerShell；留空时优先选择 PowerShell 7。
     [string]$PowerShellPath = "",
@@ -52,6 +53,100 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Find-ZCodeInstallation {
+    # 自动探测本机 ZCode 安装路径。多源回退，找到即返回 ZCode.exe 完整路径。
+    # 探测顺序（从最可靠到最兜底）：运行中进程 → 注册表卸载项 → 桌面/开始菜单快捷方式 → 常见安装目录。
+
+    # 1. 运行中的 ZCode 进程（最准，但需要 ZCode 正在运行）。
+    $proc = Get-Process -Name "ZCode" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($proc) {
+        try {
+            $procPath = $proc.Path
+            if ($procPath -and (Test-Path -LiteralPath $procPath -PathType Leaf)) {
+                return $procPath
+            }
+        } catch {
+            # 进程权限不足读不到路径，继续尝试其他源。
+        }
+    }
+
+    # 2. 注册表卸载项（最通用，安装版基本都有）。
+    # DisplayName 含 "ZCode"，从 DisplayIcon / UninstallString 反推安装目录。
+    $regRoots = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    )
+    foreach ($root in $regRoots) {
+        if (-not (Test-Path $root)) { continue }
+        $entries = Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+        } | Where-Object { $_.DisplayName -match "ZCode" }
+        foreach ($entry in $entries) {
+            # DisplayIcon / UninstallString 通常指向安装目录下的文件，取同目录的 ZCode.exe。
+            foreach ($propName in @("DisplayIcon", "UninstallString", "InstallLocation")) {
+                $val = $entry.$propName
+                if (-not $val) { continue }
+                # 去掉引号和参数，提取路径主体。
+                $cleaned = $val.Trim('"').Trim()
+                # 取目录部分（如果是文件路径）或本身（如果是 InstallLocation）。
+                $dir = if (Test-Path $cleaned -PathType Container) { $cleaned }
+                       elseif (Test-Path $cleaned -PathType Leaf) { Split-Path -Parent $cleaned }
+                       else {
+                           # 可能带参数，取第一个 token 的目录。
+                           $firstToken = ($cleaned -split '\s+')[0].Trim('"')
+                           if (Test-Path $firstToken -PathType Leaf) { Split-Path -Parent $firstToken }
+                       }
+                if ($dir) {
+                    $candidate = Join-Path $dir "ZCode.exe"
+                    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                        return $candidate
+                    }
+                }
+            }
+        }
+    }
+
+    # 3. 桌面 / 开始菜单快捷方式。
+    $lnkDirs = @(
+        [Environment]::GetFolderPath("Desktop"),
+        [Environment]::GetFolderPath("CommonDesktopDirectory"),
+        (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"),
+        (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs")
+    )
+    foreach ($dir in $lnkDirs) {
+        if (-not (Test-Path $dir)) { continue }
+        $lnks = Get-ChildItem $dir -Recurse -Filter "*.lnk" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match "ZCode" }
+        foreach ($lnk in $lnks) {
+            try {
+                $sh = New-Object -ComObject WScript.Shell
+                $target = $sh.CreateShortcut($lnk.FullName).TargetPath
+                [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sh)
+                if ($target -and $target -match "ZCode\.exe$" -and (Test-Path -LiteralPath $target -PathType Leaf)) {
+                    return $target
+                }
+            } catch {}
+        }
+    }
+
+    # 4. 常见安装目录（兜底）。
+    $commonDirs = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\ZCode"),
+        (Join-Path $env:ProgramFiles "ZCode"),
+        (Join-Path ${env:ProgramFiles(x86)} "ZCode"),
+        (Join-Path $env:APPDATA "ZCode")
+    )
+    foreach ($dir in $commonDirs) {
+        $candidate = Join-Path $dir "ZCode.exe"
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
 
 try {
     if (-not (Test-Path -LiteralPath $LauncherPath -PathType Leaf)) {
@@ -77,6 +172,20 @@ try {
 
     if (-not (Test-Path -LiteralPath $NativeLauncherSourcePath -PathType Leaf)) {
         throw "无控制台启动器源码不存在：$NativeLauncherSourcePath"
+    }
+
+    # ZCode 路径：未指定或不存在时自动探测本机安装位置。
+    if ([string]::IsNullOrWhiteSpace($ZCodePath) -or -not (Test-Path -LiteralPath $ZCodePath -PathType Leaf)) {
+        if (-not [string]::IsNullOrWhiteSpace($ZCodePath)) {
+            Write-Warning "指定的 ZCode 路径不存在，尝试自动探测：$ZCodePath"
+        }
+        $detected = Find-ZCodeInstallation
+        if ($detected) {
+            $ZCodePath = $detected
+            Write-Host "已自动探测到 ZCode：$ZCodePath"
+        } else {
+            throw "未找到 ZCode 安装路径。请用 -ZCodePath 参数手动指定 ZCode.exe 的完整路径。"
+        }
     }
 
     if (-not (Test-Path -LiteralPath $ZCodePath -PathType Leaf)) {
