@@ -97,4 +97,7 @@ pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1 `
 ## 致谢
 
 - 工具版本：2.0
-- 示例素材：背景图来自游民星空（gamersky），示例视频为赛博朋克风格（MoeWalls），仅作演示，商用请替换
+- 适用 ZCode：当前发行版（基于 Chromium/Electron）
+- 视频背景实现参考：[VSCode background-cover](https://github.com/AShujiao/vscode-background-cover) 插件、[掘金：黑神话悟空视频背景](https://juejin.cn/post/7405464212958642227)
+- 示例素材：背景图来自游民星空（gamersky），示例视频为赛博朋克风格（MoeWalls），仅作演示，商用请替换为自有素材
+
