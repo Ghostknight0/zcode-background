@@ -4,11 +4,11 @@ param(
     [ValidateSet("image", "random", "video")]
     [string]$BackgroundMode = "random",
 
-    # 固定图片路径（image 模式用）；默认指向脚本同级的 assets 示例图。
-    [string]$ImagePath = (Join-Path $PSScriptRoot "assets\sample-background.jpg"),
+    # 固定图片路径（image 模式用；向后兼容旧用法）。
+    [string]$ImagePath = "C:\Users\admin\OneDrive\图片\Pictures\gamersky_03origin_05_201812151222170.jpg",
 
-    # 媒体目录（random / video 模式用，图片视频可混放同一目录）；默认指向脚本同级 assets。
-    [string]$MediaDirectory = (Join-Path $PSScriptRoot "assets"),
+    # 媒体目录（random / video 模式用，图片视频可混放同一目录）。
+    [string]$MediaDirectory = "E:\wallpapervideo",
 
     # 固定视频路径（可选；image 模式下想直接放视频时用）。
     [string]$VideoPath,
@@ -117,7 +117,7 @@ function Get-RandomMediaFromDirectory {
         [string]$Directory,
 
         [Parameter(Mandatory)]
-        [ValidateSet("random", "video")]
+        [ValidateSet("image", "random", "video")]
         [string]$Mode
     )
 
@@ -135,6 +135,14 @@ function Get-RandomMediaFromDirectory {
         }
         if ($type -eq "video") { $videoPool += $entry }
         else { $imagePool += $entry }
+    }
+
+    # image 模式：只用图片池（与 random 的区别：不含视频）。
+    if ($Mode -eq "image") {
+        if ($imagePool.Count -eq 0) {
+            throw "媒体目录中没有可用的图片文件：$Directory"
+        }
+        return ($imagePool | Get-Random)
     }
 
     # video 模式：只用视频池。
@@ -201,7 +209,7 @@ function Start-MediaHttpServer {
         [Parameter(Mandatory)]
         [string]$Directory,
 
-        [ValidateSet("random", "video", "none")]
+        [ValidateSet("image", "random", "video", "none")]
         [string]$RandomMode = "none"
     )
 
@@ -241,6 +249,12 @@ function Start-MediaHttpServer {
                 }
                 if ($type -eq "video") { $videoPool += $entry }
                 else { $imagePool += $entry }
+            }
+
+            # image 模式：只用图片池（与 random 的区别：不含视频）。
+            if ($RandomMode -eq "image") {
+                if ($imagePool.Count -eq 0) { return $null }
+                return ($imagePool | Get-Random)
             }
 
             # video 模式：只用视频池。
@@ -828,7 +842,21 @@ function Resolve-MediaForCurrentRun {
     # 根据模式决定本次启动用哪个媒体文件、什么类型。
     # 返回：@{ Path=...; Type=...; Directory=...(HTTP 服务要托管的目录) }
     if ($Mode -eq "image") {
-        # image 模式：优先 VideoPath（若给了），否则 ImagePath。
+        # image 模式：传了 MediaDirectory 就从目录随机抽图片（支持轮换），
+        # 否则回退到旧的 ImagePath/VideoPath 单文件行为（向后兼容）。
+        if ($MediaDirectory) {
+            if (-not (Test-Path -LiteralPath $MediaDirectory -PathType Container)) {
+                throw "媒体目录不存在：$MediaDirectory"
+            }
+            $resolvedDir = (Resolve-Path -LiteralPath $MediaDirectory).Path
+            $picked = Get-RandomMediaFromDirectory -Directory $resolvedDir -Mode "image"
+            return @{
+                Path      = $picked.Path
+                Type      = $picked.Type
+                Directory = $resolvedDir
+            }
+        }
+        # 旧逻辑：优先 VideoPath（若给了），否则 ImagePath。
         if ($VideoPath) {
             $resolved = (Resolve-Path -LiteralPath $VideoPath).Path
             return @{
@@ -917,8 +945,10 @@ try {
     }
 
     # 2. 启动媒体 HTTP 服务。
-    #    random/video 模式才提供 /random 端点；image 模式不需要（轮换也无意义）。
-    $httpRandomMode = if ($BackgroundMode -in @("random", "video")) { $BackgroundMode } else { "none" }
+    #    image（传了 MediaDirectory）/random/video 模式提供 /random 端点用于轮换；
+    #    image 单文件模式（无 MediaDirectory）不需要轮换，用 none。
+    $httpRandomMode = if ($BackgroundMode -in @("random", "video") -or
+        ($BackgroundMode -eq "image" -and $MediaDirectory)) { $BackgroundMode } else { "none" }
     $mediaServer = Start-MediaHttpServer -Port $actualPort -Directory $mediaDirectory -RandomMode $httpRandomMode
     Write-Host "媒体 HTTP 服务已启动：http://127.0.0.1:$actualPort/ （托管：$mediaDirectory）"
 
@@ -933,8 +963,9 @@ try {
     $mediaBaseUrl = "http://127.0.0.1:$actualPort/"
     $sourceUrl = $mediaBaseUrl + $encodedName
 
-    # 仅 random/video 模式 + RotateInterval>0 才真正轮换。
-    $effectiveRotate = if ($BackgroundMode -in @("random", "video") -and $RotateInterval -gt 0) { $RotateInterval } else { 0 }
+    # 轮换生效条件：RotateInterval>0 且 HTTP 服务已启用 /random 端点（即 httpRandomMode 非 none）。
+    # image 单文件模式（无 MediaDirectory）的 httpRandomMode=none，自然不轮换。
+    $effectiveRotate = if ($RotateInterval -gt 0 -and $httpRandomMode -ne "none") { $RotateInterval } else { 0 }
 
     # 解析实际生效的双透明度：未指定（<=0）时回退到通用 $Opacity。
     $effectiveImageOpacity = if ($ImageOpacity -gt 0) { $ImageOpacity } else { $Opacity }

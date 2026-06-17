@@ -153,9 +153,12 @@ try {
         throw "背景启动脚本不存在：$LauncherPath"
     }
 
-    # 按模式校验资源：image 校验图片，random/video 校验媒体目录。
+    # 按模式校验资源：
+    #   image + 传了 MediaDirectory → 校验目录（轮换图片模式）
+    #   image + 未传 MediaDirectory → 校验 ImagePath（固定单文件，向后兼容）
+    #   random/video → 校验 MediaDirectory
     $resolvedMediaPath = ""
-    if ($BackgroundMode -eq "image") {
+    if ($BackgroundMode -eq "image" -and [string]::IsNullOrWhiteSpace($MediaDirectory)) {
         if (-not (Test-Path -LiteralPath $ImagePath -PathType Leaf)) {
             throw "背景图片不存在：$ImagePath"
         }
@@ -275,14 +278,14 @@ try {
         New-Item -ItemType Directory -Path $shortcutDirectory -Force | Out-Null
     }
 
-    # 按模式构造 Arguments：image 模式传 ImagePath，random/video 模式传 MediaDirectory。
-    $modeArgs = switch ($BackgroundMode) {
-        "image" {
-            "-BackgroundMode image -ImagePath `"$resolvedMediaPath`""
-        }
-        default {
-            "-BackgroundMode $BackgroundMode -MediaDirectory `"$resolvedMediaDirectory`""
-        }
+    # 按模式构造 Arguments：
+    #   image + 传了 MediaDirectory → 从目录轮换图片
+    #   image + 未传 MediaDirectory → 固定单文件（向后兼容）
+    #   random/video → 从 MediaDirectory 随机
+    $modeArgs = if ($BackgroundMode -eq "image" -and [string]::IsNullOrWhiteSpace($MediaDirectory)) {
+        "-BackgroundMode image -ImagePath `"$resolvedMediaPath`""
+    } else {
+        "-BackgroundMode $BackgroundMode -MediaDirectory `"$resolvedMediaDirectory`""
     }
 
     $shell = New-Object -ComObject WScript.Shell

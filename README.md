@@ -31,7 +31,7 @@ pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1
 | 模式 | 说明 |
 |---|---|
 | `random` ⭐ 默认 | 从目录随机抽，**图片视频 1:1 混合**（无论数量比例，各 50% 概率） |
-| `image` | 固定一张图片或单个视频 |
+| `image` | 传 `-MediaDirectory` 时从目录**只轮换图片**；传 `-ImagePath` 时固定单图（向后兼容） |
 | `video` | 从目录随机抽视频 |
 
 ## 用自己的媒体库
@@ -63,7 +63,7 @@ pwsh -ExecutionPolicy Bypass -File .\install-zcode-background-shortcut.ps1 `
 
 **透明度参考**：图片建议 `0.15`（温和），视频建议 `0.25`（明显）。混合轮换时用 `-ImageOpacity`/`-VideoOpacity` 分别设置，切换时自动应用。
 
-**轮换说明**：`-RotateInterval > 0` 时背景定时自动换（**不重启 ZCode**），仅 `random`/`video` 模式生效。
+**轮换说明**：`-RotateInterval > 0` 时背景定时自动换（**不重启 ZCode**）。`random`/`video`/`image`（传 MediaDirectory）模式均支持。
 
 ---
 
