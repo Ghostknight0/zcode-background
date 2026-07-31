@@ -169,38 +169,6 @@ function Get-RandomMediaFromDirectory {
     return ($videoPool | Get-Random)
 }
 
-function Find-AvailableMediaPort {
-    param(
-        [Parameter(Mandatory)]
-        [int]$StartPort,
-
-        [int]$MaxAttempts = 100
-    )
-
-    # 从起始端口开始，逐个尝试绑定 TCP 监听以确认端口空闲。
-    # 用 TcpListener 真实绑定比查询连接表更可靠（避免 TOCTOU）。
-    for ($offset = 0; $offset -lt $MaxAttempts; $offset++) {
-        $port = $StartPort + $offset
-        if ($port -gt 65535) { break }
-        $listener = $null
-        try {
-            $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
-            $listener.Start()
-            return $port
-        }
-        catch {
-            # 端口被占用，继续尝试下一个。
-        }
-        finally {
-            if ($listener) {
-                try { $listener.Stop() } catch {}
-            }
-        }
-    }
-
-    throw "在 $StartPort 起的 $MaxAttempts 个端口范围内未找到空闲端口。"
-}
-
 function Start-MediaHttpServer {
     param(
         [Parameter(Mandatory)]
@@ -210,16 +178,47 @@ function Start-MediaHttpServer {
         [string]$Directory,
 
         [ValidateSet("image", "random", "video", "none")]
-        [string]$RandomMode = "none"
+        [string]$RandomMode = "none",
+
+        # 找空闲端口时的最大尝试次数（Port 起，逐个 +1）。
+        [int]$MaxPortAttempts = 100
     )
 
     # 启动一个绑定 127.0.0.1 的本地 HTTP 服务：
     #   GET /<文件名>      → 流式返回该文件，支持 Range 请求（视频 seek 必需）
     #   GET /random        → 返回一个随机媒体文件的 JSON 描述（供覆盖层轮换用）
     #   GET /health        → 返回 200，用于存活探测
-    $listener = [Net.HttpListener]::new()
-    $listener.Prefixes.Add("http://127.0.0.1:$Port/")
-    $listener.Start()
+    #
+    # 关键：必须用 HttpListener 本身探测端口可用性（而非 TcpListener）。
+    # HttpListener 走 HTTP.sys 内核驱动，与 TCP 绑定机制不同——
+    # TcpListener 能绑定的端口，HttpListener 可能因为 HTTP.sys 层被占用而失败
+    # （典型场景：codex.exe 等应用在 HTTP.sys 层绑定了同端口）。
+    # 所以这里直接循环尝试 HttpListener.Start，成功即真正可用。
+    $listener = $null
+    $actualPort = 0
+    $attemptErrors = [Collections.Generic.List[string]]::new()
+    for ($offset = 0; $offset -lt $MaxPortAttempts; $offset++) {
+        $candidate = $Port + $offset
+        if ($candidate -gt 65535) { break }
+        $trial = [Net.HttpListener]::new()
+        $trial.Prefixes.Add("http://127.0.0.1:$candidate/")
+        try {
+            $trial.Start()
+            # 成功：这个 listener 直接复用，不再 Stop（避免空窗期被别的进程抢走）。
+            $listener = $trial
+            $actualPort = $candidate
+            break
+        }
+        catch {
+            $attemptErrors.Add("端口 $candidate：$($_.Exception.Message)")
+            # 失败：释放这个 trial listener，试下一个端口。
+            try { $trial.Close() } catch {}
+        }
+    }
+
+    if (-not $listener) {
+        throw "无法启动媒体 HTTP 服务（尝试了端口 $Port ~ $([Math]::Min($Port + $MaxPortAttempts - 1, 65535))）。`n可能原因：这些端口在 HTTP.sys 层被其他程序占用。`n最近错误：`n" + ($attemptErrors -join "`n")
+    }
 
     # 用后台 Runspace 处理请求，避免阻塞主线程（主线程要等 ZCode 退出）。
     $ps = [PowerShell]::Create()
@@ -418,7 +417,7 @@ function Start-MediaHttpServer {
         Listener   = $listener
         PowerShell = $ps
         Handle     = $handle
-        Port       = $Port
+        Port       = $actualPort
     }
 }
 
@@ -938,18 +937,16 @@ try {
         exit 0
     }
 
-    # 1. 找空闲 HTTP 端口。
-    $actualPort = Find-AvailableMediaPort -StartPort $MediaPort
-    if ($actualPort -ne $MediaPort) {
-        Write-Warning "媒体端口 $MediaPort 被占用，改用 $actualPort。"
-    }
-
-    # 2. 启动媒体 HTTP 服务。
+    # 1+2. 启动媒体 HTTP 服务（内部自动找空闲端口）。
     #    image（传了 MediaDirectory）/random/video 模式提供 /random 端点用于轮换；
     #    image 单文件模式（无 MediaDirectory）不需要轮换，用 none。
     $httpRandomMode = if ($BackgroundMode -in @("random", "video") -or
         ($BackgroundMode -eq "image" -and $MediaDirectory)) { $BackgroundMode } else { "none" }
-    $mediaServer = Start-MediaHttpServer -Port $actualPort -Directory $mediaDirectory -RandomMode $httpRandomMode
+    $mediaServer = Start-MediaHttpServer -Port $MediaPort -Directory $mediaDirectory -RandomMode $httpRandomMode
+    $actualPort = $mediaServer.Port
+    if ($actualPort -ne $MediaPort) {
+        Write-Warning "媒体端口 $MediaPort 被占用（可能是 codex/其他应用在 HTTP.sys 层占用），改用 $actualPort。"
+    }
     Write-Host "媒体 HTTP 服务已启动：http://127.0.0.1:$actualPort/ （托管：$mediaDirectory）"
 
     # 3. 关闭 → 重启 ZCode。
